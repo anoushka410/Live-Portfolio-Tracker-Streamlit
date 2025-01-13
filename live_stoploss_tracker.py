@@ -175,7 +175,7 @@ def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_crede
     smallcap_ticker = 'NIFTY SMALLCAP 100'
 
     # Fetch historical data
-    indices_data = pd.read_csv("tmp/indices-data-v2.csv")
+    indices_data = pd.read_csv("indices-data-v2.csv")
     indices_data = (indices_data[['Date','NIFTY 50','NIFTY MIDCAP 100', 'NIFTY SMALLCAP 100']]).set_index('Date')
     
     # nifty_data = yf.download(nifty_ticker, start=min(buy_dates), end=max(buy_dates))
