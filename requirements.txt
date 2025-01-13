@@ -1,0 +1,7 @@
+streamlit
+pandas
+yfinance
+kiteconnect == 5.0.0
+azure-core==1.24.1
+azure-storage-blob==12.12.0
+google-auth-httplib2
