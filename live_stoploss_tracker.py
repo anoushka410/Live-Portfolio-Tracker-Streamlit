@@ -20,7 +20,8 @@ st.set_page_config(page_title="Live Stop-loss Tracker", page_icon=":money_with_w
 
 logging.basicConfig(level=logging.INFO)
 
-SECRETS_CONN_STR = os.getenv("AZURE_BLOB_CONN_STR")
+# SECRETS_CONN_STR = os.getenv("AZURE_BLOB_CONN_STR")
+SECRETS_CONN_STR = "DefaultEndpointsProtocol=https;AccountName=niftytrade;AccountKey=M8zTfqYgWU+Vkb55HMLxF+Zzq2d0Ka+kDveQcq+wFlv9pYimCqxjFZy3jt4a0OGpzgMmKfiKrN7I+AStaZ8e7A==;EndpointSuffix=core.windows.net"
 PARAM_CONTAINER = "parameters"
 
 
@@ -94,14 +95,15 @@ def get_index_value(data, ticker, date):
         print(f"{date} not found in indices data")
         return None
     
-def read_google_sheet(spreadsheet_id, range_name):
+def read_google_sheet(spreadsheet_id, range_name, credentials):
     """
     Read data from Google Sheets
     """
     try:
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-        credentials = service_account.Credentials.from_service_account_file(
-            'google_sheets_key.json', scopes=SCOPES)
+        
+        # credentials = service_account.Credentials.from_service_account_file(
+        #     'google_sheets_key.json', scopes=SCOPES)
         
         service = build('sheets', 'v4', credentials=credentials)
         
@@ -133,7 +135,7 @@ def read_google_sheet(spreadsheet_id, range_name):
         st.error(f"Error reading Google Sheet: {e}")
         return None
 
-def create_live_tracker(spreadsheet_id, selected_sheet,kite, force_refresh=False):
+def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_credentials, force_refresh=False):
     """
     Modified to use Google Sheets instead of Excel file
     """
@@ -148,7 +150,7 @@ def create_live_tracker(spreadsheet_id, selected_sheet,kite, force_refresh=False
         return st.session_state.tracker_df
 
     # Read the input from Google Sheet
-    df = read_google_sheet(spreadsheet_id, selected_sheet)
+    df = read_google_sheet(spreadsheet_id, selected_sheet, google_sheet_credentials)
     if df is None:
         st.error("Failed to read input data from Google Sheet")
         return None
@@ -291,14 +293,14 @@ def create_live_tracker(spreadsheet_id, selected_sheet,kite, force_refresh=False
     
     return tracker_df
 
-def create_google_sheet(df):
+def create_google_sheet(df, credentials):
     try:
         # Use service account credentials
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets',
                   'https://www.googleapis.com/auth/drive.file']
 
-        credentials = service_account.Credentials.from_service_account_file(
-            'google_sheets_key.json', scopes=SCOPES)
+        # credentials = service_account.Credentials.from_service_account_file(
+        #     'google_sheets_key.json', scopes=SCOPES)
         
         service = build('sheets', 'v4', credentials=credentials)
         
@@ -340,13 +342,13 @@ def create_google_sheet(df):
         logging.error(f"Detailed error creating Google Sheet: {str(e)}")
         return None
 
-def test_google_api_access():
+def test_google_api_access(credentials):
     try:
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets',
                   'https://www.googleapis.com/auth/drive.file']
         
-        credentials = service_account.Credentials.from_service_account_file(
-            'google_sheets_key.json', scopes=SCOPES)
+        # credentials = service_account.Credentials.from_service_account_file(
+        #     'google_sheets_key.json', scopes=SCOPES)
         
         service = build('sheets', 'v4', credentials=credentials)
         drive_service = build('drive', 'v3', credentials=credentials)
@@ -410,6 +412,12 @@ if __name__ == "__main__":
         )
     
     st.title("Live Stock Tracker")
+
+    download_file("/tmp/google_sheets_key.json", "google_sheets_key.json",
+                     PARAM_CONTAINER,
+                     SECRETS_CONN_STR)
+    
+    google_sheet_credentials = json.load(open("/tmp/google_sheets_key.json","r"))
     
     # Create a container for the header section
     header_container = st.container()
@@ -427,7 +435,7 @@ if __name__ == "__main__":
             if st.button("Open in Google Sheets 📊"):
                 with st.spinner('Creating Google Sheet...'):
                     if 'tracker_df' in st.session_state:
-                        sheet_url = create_google_sheet(st.session_state.tracker_df)
+                        sheet_url = create_google_sheet(st.session_state.tracker_df, google_sheet_credentials)
                         if sheet_url:
                             st.markdown(f"[Open Sheet]({sheet_url})")
 
@@ -445,7 +453,7 @@ if __name__ == "__main__":
 
     # Replace input_file with spreadsheet_id
     SPREADSHEET_ID = '1YrvXbm2Yr2d9cR5xjFyP0FQ149XZb95yUGxoDpcBmVg'  # Get this from your Google Sheet URL
-    
+
     try:
 
         sheet_names = ["Mom-AGP-24-25", "Mom-KAP24-25", "Value-AGP-24-25", "Value-KAP-24-25"]
@@ -454,7 +462,7 @@ if __name__ == "__main__":
 
         # Get the tracker DataFrame with force_refresh based on button click
         # tracker_df = create_live_tracker(input_file, kite, force_refresh=refresh_clicked)
-        tracker_df = create_live_tracker(SPREADSHEET_ID, selected_sheet, kite, force_refresh=refresh_clicked)
+        tracker_df = create_live_tracker(SPREADSHEET_ID, selected_sheet, kite, google_sheet_credentials, force_refresh=refresh_clicked)
         
         # Define the styling function for the entire row
         def highlight_stoploss(row):
@@ -495,4 +503,4 @@ if __name__ == "__main__":
         st.error(f"Error creating tracker: {e}")
 
     if st.button("Test Google API Connection"):
-        test_google_api_access()
+        test_google_api_access(google_sheet_credentials)
