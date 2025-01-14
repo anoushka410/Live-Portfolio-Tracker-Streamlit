@@ -16,7 +16,10 @@ from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
 
-st.set_page_config(page_title="Live Stop-loss Tracker", page_icon=":money_with_wings:", layout="wide")
+st.set_page_config(page_title="Live Stop-loss Tracker", 
+                   page_icon=":money_with_wings:", 
+                   layout="wide",
+                   initial_sidebar_state="expanded")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -101,7 +104,6 @@ def read_google_sheet(spreadsheet_id, range_name, credentials_path):
     """
     try:
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-        
         credentials = service_account.Credentials.from_service_account_file(
             credentials_path, scopes=SCOPES)
         
@@ -192,14 +194,14 @@ def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_crede
                 "Value of NIFTY": None,
                 "Value of MidCap": None,
                 "Value of Small Cap": None,
-                "Current Price": None,
+                "Current Stock Price": None,
+                "Current NIFTY": None,
+                "Current MidCap": None,
+                "Current SmallCap": None,
                 "Stock Growth %": None,
                 "NIFTY Growth %": None,
                 "MidCap Growth %": None,
                 "SmallCap Growth %": None,
-                "Current NIFTY": None,
-                "Current MidCap": None,
-                "Current SmallCap": None,
                 "Stop-loss Triggered": None
             }
             tracker_df = pd.concat([tracker_df, pd.DataFrame([new_row])], ignore_index=True)
@@ -220,13 +222,11 @@ def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_crede
         stock_prices = {}
         # Fetching live price for all stocks with better error handling
         for stock in list(set(tracker_df['Stock Name'])):
-            
             if stock == "NSE:HBLPOWER":
                 stock = "NSE:HBLENGINE"
             
-            max_retries = 3
+            max_retries = 2
             retry_count = 0
-            
             while retry_count < max_retries:
                 try:
                     price = get_kite_ltp(kite, stock)
@@ -242,7 +242,18 @@ def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_crede
             
             if retry_count == max_retries:
                 st.warning(f"Could not fetch price for {stock} after {max_retries} attempts")
-        
+                try:
+                    # Fetch live price from yfinance
+                    ticker_symbol = f"{stock[4:-1]}.NS"
+                    yf_stock = yf.Ticker(ticker_symbol)
+                    yf_price = yf_stock.history(period="1d")['Close'][-1]
+                    stock_prices[stock] = yf_price
+                    st.write(f"Fetched live price for {ticker_symbol} from yfinance")
+
+                except Exception as e:
+                    st.warning(f"Failed to fetch price for {ticker_symbol} from yfinance. Ignore Stock.")
+                    stock_prices[stock] = 0
+            
         st.session_state.stock_prices = stock_prices
     else:
         stock_prices = st.session_state.stock_prices
