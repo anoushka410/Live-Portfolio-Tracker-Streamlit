@@ -23,9 +23,8 @@ st.set_page_config(page_title="Live Stop-loss Tracker",
 
 logging.basicConfig(level=logging.INFO)
 
-# SECRETS_CONN_STR = os.getenv("AZURE_BLOB_CONN_STR")
-SECRETS_CONN_STR = "DefaultEndpointsProtocol=https;AccountName=niftytrade;AccountKey=M8zTfqYgWU+Vkb55HMLxF+Zzq2d0Ka+kDveQcq+wFlv9pYimCqxjFZy3jt4a0OGpzgMmKfiKrN7I+AStaZ8e7A==;EndpointSuffix=core.windows.net"
-PARAM_CONTAINER = "parameters"
+SECRETS_CONN_STR = os.getenv("AZURE_BLOB_CONN_STR")
+PARAM_CONTAINER = os.getenv("PARAM_CONTAINER")
 
 
 def download_file(filename, blobname, container_name, conn_str):
@@ -397,7 +396,8 @@ def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_crede
             st.error(f"Error updating row {idx}: {e}")
             continue
 
-    st.error(f"Beta values missing for {set(error_tickers)}")
+    if len(error_tickers) > 0:
+        st.error(f"Beta values missing for {set(error_tickers)}")
 
     # Store the updated DataFrame in session state
     st.session_state.tracker_df = tracker_df
@@ -483,7 +483,7 @@ if __name__ == "__main__":
         st.error(f"Error connecting to Kite: {e}")
 
     # Replace input_file with spreadsheet_id
-    SPREADSHEET_ID = '1YrvXbm2Yr2d9cR5xjFyP0FQ149XZb95yUGxoDpcBmVg'  # Get this from your Google Sheet URL
+    SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
     try:
 
