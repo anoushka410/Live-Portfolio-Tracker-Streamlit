@@ -137,173 +137,6 @@ def read_google_sheet(spreadsheet_id, range_name, credentials_path):
         st.error(f"Error reading Google Sheet: {e}")
         return None
 
-def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_credentials_path, force_refresh=False):
-    """
-    Modified to use Google Sheets instead of Excel file
-    """
-    # Initialize session state for storing data if not already present
-    if 'tracker_df' not in st.session_state:
-        st.session_state.tracker_df = None
-    if 'last_refresh_time' not in st.session_state:
-        st.session_state.last_refresh_time = None
-    
-    # Return cached data if available and no force refresh
-    if not force_refresh and st.session_state.tracker_df is not None:
-        return st.session_state.tracker_df
-
-    # Read the input from Google Sheet
-    df = read_google_sheet(spreadsheet_id, selected_sheet, google_sheet_credentials_path)
-    if df is None:
-        st.error("Failed to read input data from Google Sheet")
-        return None
-        
-    stock_names = df["Stock Name"]
-    buy_data = df.set_index("Stock Name").T
-    # Convert all prices to float
-    buy_data = buy_data.apply(pd.to_numeric, errors='coerce')
-    
-    # Initialize live tracker DataFrame
-    tracker_columns = [
-        "Stock Name", "Date of Trade", "Buy Price", "Value of NIFTY", "Value of MidCap", 
-        "Value of Small Cap", "Current Price", "Stock Growth %", "NIFTY Growth %", 
-        "MidCap Growth %", "SmallCap Growth %", "Current NIFTY", "Current MidCap", 
-        "Current SmallCap", "Stop-loss Triggered"
-    ]
-    tracker_df = pd.DataFrame(columns=tracker_columns)
-
-    # Define index symbols
-    nifty_ticker = 'NIFTY 50'
-    midcap_ticker = 'NIFTY MIDCAP 100'
-    smallcap_ticker = 'NIFTY SMALLCAP 100'
-
-    # Fetch historical data
-    indices_data = pd.read_csv("indices-data-v2.csv")
-    indices_data = (indices_data[['Date','NIFTY 50','NIFTY MIDCAP 100', 'NIFTY SMALLCAP 100']]).set_index('Date')
-    
-    # nifty_data = yf.download(nifty_ticker, start=min(buy_dates), end=max(buy_dates))
-    # midcap_data = yf.download(midcap_ticker, start=min(buy_dates), end=max(buy_dates))
-    # smallcap_data = yf.download(smallcap_ticker, start=min(buy_dates), end=max(buy_dates))
-    
-    # Populate tracker_df with initial data
-    for stock in stock_names:
-        for date, cost in buy_data[stock].dropna().items():
-            new_row = {
-                "Stock Name": stock,
-                "Date of Trade": str(date)[:10],
-                "Buy Price": float(cost),
-                "Value of NIFTY": None,
-                "Value of MidCap": None,
-                "Value of Small Cap": None,
-                "Current Stock Price": None,
-                "Current NIFTY": None,
-                "Current MidCap": None,
-                "Current SmallCap": None,
-                "Stock Growth %": None,
-                "NIFTY Growth %": None,
-                "MidCap Growth %": None,
-                "SmallCap Growth %": None,
-                "Stop-loss Triggered": None
-            }
-            tracker_df = pd.concat([tracker_df, pd.DataFrame([new_row])], ignore_index=True)
-
-    # Add index values to the tracker DataFrame
-    tracker_df['Value of NIFTY'] = tracker_df['Date of Trade'].apply(
-        lambda date: get_index_value(indices_data, nifty_ticker, date)
-    )
-    tracker_df['Value of MidCap'] = tracker_df['Date of Trade'].apply(
-        lambda date: get_index_value(indices_data, midcap_ticker, date)
-    )
-    tracker_df['Value of Small Cap'] = tracker_df['Date of Trade'].apply(
-        lambda date: get_index_value(indices_data, smallcap_ticker, date)
-    )
-
-    # Cache the stock prices in session state if not exists
-    if 'stock_prices' not in st.session_state or force_refresh:
-        stock_prices = {}
-        # Fetching live price for all stocks with better error handling
-        for stock in list(set(tracker_df['Stock Name'])):
-            if stock == "NSE:HBLPOWER":
-                stock = "NSE:HBLENGINE"
-            
-            max_retries = 2
-            retry_count = 0
-            while retry_count < max_retries:
-                try:
-                    price = get_kite_ltp(kite, stock)
-                    if price is not None:
-                        stock_prices[stock] = price
-                        break
-                    retry_count += 1
-                    time.sleep(1)
-                except Exception as e:
-                    st.error(f"Attempt {retry_count + 1} failed for {stock}: {e}")
-                    retry_count += 1
-                    time.sleep(2)
-            
-            if retry_count == max_retries:
-                st.warning(f"Could not fetch price for {stock} after {max_retries} attempts")
-                try:
-                    # Fetch live price from yfinance
-                    ticker_symbol = f"{stock[4:-1]}.NS"
-                    yf_stock = yf.Ticker(ticker_symbol)
-                    yf_price = yf_stock.history(period="1d")['Close'][-1]
-                    stock_prices[stock] = yf_price
-                    st.write(f"Fetched live price for {ticker_symbol} from yfinance")
-
-                except Exception as e:
-                    st.warning(f"Failed to fetch price for {ticker_symbol} from yfinance. Ignore Stock.")
-                    stock_prices[stock] = 0
-            
-        st.session_state.stock_prices = stock_prices
-    else:
-        stock_prices = st.session_state.stock_prices
-
-    TODAY_DATE = (dt.datetime.utcnow() + dt.timedelta(hours=5,minutes=30)).date()
-    yesterday_date = str(TODAY_DATE - timedelta(days=1))
-    current_nifty = get_index_value(indices_data, nifty_ticker, yesterday_date)
-    current_midcap = get_index_value(indices_data, midcap_ticker, yesterday_date)
-    current_smallcap = get_index_value(indices_data, smallcap_ticker, yesterday_date)
-
-    # pd.to_numeric(tracker_df['column'], errors='coerce')
-
-    # Update tracker DataFrame with cached or new prices
-    for idx, row in tracker_df.iterrows():
-        try:
-            stock_name = row["Stock Name"]
-            stock_price = stock_prices.get(stock_name)
-            
-            tracker_df.loc[idx, "Current Price"] = stock_price
-            tracker_df.loc[idx, "Current NIFTY"] = current_nifty
-            tracker_df.loc[idx, "Current MidCap"] = current_midcap
-            tracker_df.loc[idx, "Current SmallCap"] = current_smallcap
-
-            # Calculate and store growth percentages
-            stock_percent_growth = ((stock_price - float(row["Buy Price"])) / float(row["Buy Price"])) * 100
-            nifty_growth = ((current_nifty - float(row["Value of NIFTY"])) / float(row["Value of NIFTY"])) * 100
-            midcap_growth = ((current_midcap - float(row["Value of MidCap"])) / float(row["Value of MidCap"])) * 100
-            smallcap_growth = ((current_smallcap - float(row["Value of Small Cap"])) / float(row["Value of Small Cap"])) * 100
-
-            tracker_df.loc[idx, "Stock Growth %"] = round(stock_percent_growth, 2)
-            tracker_df.loc[idx, "NIFTY Growth %"] = round(nifty_growth, 2)
-            tracker_df.loc[idx, "MidCap Growth %"] = round(midcap_growth, 2)
-            tracker_df.loc[idx, "SmallCap Growth %"] = round(smallcap_growth, 2)
-
-            stoploss_hit = "TRUE" if ((nifty_growth - stock_percent_growth >= 10) and 
-                                    (midcap_growth - stock_percent_growth >= 10) and 
-                                    (smallcap_growth - stock_percent_growth >= 10)) else "FALSE"
-
-            tracker_df.loc[idx, "Stop-loss Triggered"] = stoploss_hit
-
-        except Exception as e:
-            st.error(f"Error updating row {idx}: {e}")
-            continue
-
-    # Store the updated DataFrame in session state
-    st.session_state.tracker_df = tracker_df
-    st.session_state.last_refresh_time = datetime.now()
-    
-    return tracker_df
-
 def create_google_sheet(df, credentials_path):
     try:
         # Use service account credentials
@@ -386,6 +219,192 @@ def test_google_api_access(credentials_path):
     except Exception as e:
         st.error(f"Google API test failed: {e}")
         return False
+
+
+def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_credentials_path, force_refresh=False):
+    """
+    Modified to use Google Sheets instead of Excel file
+    """
+    # Initialize session state for storing data if not already present
+    if 'tracker_df' not in st.session_state:
+        st.session_state.tracker_df = None
+    if 'last_refresh_time' not in st.session_state:
+        st.session_state.last_refresh_time = None
+    
+    # Return cached data if available and no force refresh
+    if not force_refresh and st.session_state.tracker_df is not None:
+        return st.session_state.tracker_df
+
+    # Read the input from Google Sheet
+    df = read_google_sheet(spreadsheet_id, selected_sheet, google_sheet_credentials_path)
+    if df is None:
+        st.error("Failed to read input data from Google Sheet")
+        return None
+        
+    stock_names = df["Stock Name"]
+    buy_data = df.set_index("Stock Name").T
+    # Convert all prices to float
+    buy_data = buy_data.apply(pd.to_numeric, errors='coerce')
+    
+    # Initialize live tracker DataFrame
+    tracker_columns = [
+        "Stock Name", "Date of Trade", "Buy Price", "Value of NIFTY", "Value of MidCap", 
+        "Value of Small Cap", "Current Price", "Stock Growth %", "NIFTY Growth %", 
+        "MidCap Growth %", "SmallCap Growth %", "Current NIFTY", "Current MidCap", 
+        "Current SmallCap", "Stop-loss Triggered"
+    ]
+    tracker_df = pd.DataFrame(columns=tracker_columns)
+
+    # Define index symbols
+    nifty_ticker = 'NIFTY 50'
+    midcap_ticker = 'NIFTY MIDCAP 100'
+    smallcap_ticker = 'NIFTY SMALLCAP 100'
+
+    # Fetch historical data
+    indices_data = pd.read_csv("indices-data-v2.csv")
+    indices_data = (indices_data[['Date','NIFTY 50','NIFTY MIDCAP 100', 'NIFTY SMALLCAP 100']]).set_index('Date')
+    
+    # nifty_data = yf.download(nifty_ticker, start=min(buy_dates), end=max(buy_dates))
+    # midcap_data = yf.download(midcap_ticker, start=min(buy_dates), end=max(buy_dates))
+    # smallcap_data = yf.download(smallcap_ticker, start=min(buy_dates), end=max(buy_dates))
+    
+    # Populate tracker_df with initial data
+    for stock in stock_names:
+        for date, cost in buy_data[stock].dropna().items():
+            new_row = {
+                "Stock Name": stock,
+                "Date of Trade": str(date)[:10],
+                "Buy Price": float(cost),
+                "Value of NIFTY": None,
+                "Value of MidCap": None,
+                "Value of Small Cap": None,
+                "Current Stock Price": None,
+                "Current NIFTY": None,
+                "Current MidCap": None,
+                "Current SmallCap": None,
+                "Stock Growth %": None,
+                "NIFTY Growth %": None,
+                "MidCap Growth %": None,
+                "SmallCap Growth %": None,
+                "Stop-loss Triggered": None
+            }
+            tracker_df = pd.concat([tracker_df, pd.DataFrame([new_row])], ignore_index=True)
+
+    # Add index values to the tracker DataFrame
+    tracker_df['Value of NIFTY'] = tracker_df['Date of Trade'].apply(
+        lambda date: get_index_value(indices_data, nifty_ticker, date)
+    )
+    tracker_df['Value of MidCap'] = tracker_df['Date of Trade'].apply(
+        lambda date: get_index_value(indices_data, midcap_ticker, date)
+    )
+    tracker_df['Value of Small Cap'] = tracker_df['Date of Trade'].apply(
+        lambda date: get_index_value(indices_data, smallcap_ticker, date)
+    )
+
+    # Fetching live price for all stocks with better error handling
+    # Cache the stock prices in session state if not exists
+    if 'stock_prices' not in st.session_state or force_refresh:
+        stock_prices = {}
+        for stock in list(set(tracker_df['Stock Name'])):
+            if stock == "NSE:HBLPOWER":
+                stock = "NSE:HBLENGINE"
+            
+            max_retries = 2
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    price = get_kite_ltp(kite, stock)
+                    if price is not None:
+                        stock_prices[stock] = price
+                        break
+                    retry_count += 1
+                    time.sleep(1)
+                except Exception as e:
+                    st.error(f"Attempt {retry_count + 1} failed for {stock}: {e}")
+                    retry_count += 1
+                    time.sleep(2)
+            
+            if retry_count == max_retries:
+                st.warning(f"Could not fetch price for {stock} after {max_retries} attempts")
+
+                try:
+                    # Fetch live price from yfinance
+                    ticker_symbol = f"{stock[4:-1]}.NS"
+                    yf_stock = yf.Ticker(ticker_symbol)
+                    yf_price = yf_stock.history(period="1d")['Close'][-1]
+                    stock_prices[stock] = yf_price
+                    st.write(f"Fetched live price for {ticker_symbol} from yfinance")
+
+                except Exception as e:
+                    st.warning(f"Failed to fetch price for {ticker_symbol} from yfinance. Ignore Stock.")
+                    stock_prices[stock] = 0
+            
+        st.session_state.stock_prices = stock_prices
+    else:
+        stock_prices = st.session_state.stock_prices
+
+    TODAY_DATE = (dt.datetime.utcnow() + dt.timedelta(hours=5,minutes=30)).date()
+    yesterday_date = str(TODAY_DATE - timedelta(days=1))
+    current_nifty = get_index_value(indices_data, nifty_ticker, yesterday_date)
+    current_midcap = get_index_value(indices_data, midcap_ticker, yesterday_date)
+    current_smallcap = get_index_value(indices_data, smallcap_ticker, yesterday_date)
+
+    # Update tracker DataFrame with cached or new prices
+    error_tickers = []
+    for idx, row in tracker_df.iterrows():
+        try:
+            stock_name = row["Stock Name"]
+            stock_price = stock_prices.get(stock_name)
+            
+            tracker_df.loc[idx, "Current Price"] = stock_price
+            tracker_df.loc[idx, "Current NIFTY"] = current_nifty
+            tracker_df.loc[idx, "Current MidCap"] = current_midcap
+            tracker_df.loc[idx, "Current SmallCap"] = current_smallcap
+
+            # Calculate and store growth percentages
+            stock_percent_growth = ((stock_price - float(row["Buy Price"])) / float(row["Buy Price"])) * 100
+            nifty_growth = ((current_nifty - float(row["Value of NIFTY"])) / float(row["Value of NIFTY"])) * 100
+            midcap_growth = ((current_midcap - float(row["Value of MidCap"])) / float(row["Value of MidCap"])) * 100
+            smallcap_growth = ((current_smallcap - float(row["Value of Small Cap"])) / float(row["Value of Small Cap"])) * 100
+
+            tracker_df.loc[idx, "Stock Growth %"] = round(stock_percent_growth, 2)
+            tracker_df.loc[idx, "NIFTY Growth %"] = round(nifty_growth, 2)
+            tracker_df.loc[idx, "MidCap Growth %"] = round(midcap_growth, 2)
+            tracker_df.loc[idx, "SmallCap Growth %"] = round(smallcap_growth, 2)
+
+            if "Mom" in selected_sheet:
+                stoploss_hit = "TRUE" if ((nifty_growth - stock_percent_growth >= 10) and 
+                                        (midcap_growth - stock_percent_growth >= 10) and 
+                                        (smallcap_growth - stock_percent_growth >= 10)) else "FALSE"
+            elif "Value" in selected_sheet:
+                beta_values = json.load(open("tmp/reg_data_store_monthly.json", 'r'))
+                ticker_symbol = f"{stock_name[4:]}.NS"
+                try:
+                    latest_date = max(beta_values[ticker_symbol].keys())
+                    nifty_beta, midcap_beta, smallcap_beta = beta_values[ticker_symbol][latest_date]
+                except Exception as e:
+                    error_tickers.append(ticker_symbol)
+                    nifty_beta, midcap_beta, smallcap_beta = 1,1,1
+                    
+                threshold = 10
+                stoploss_hit = "TRUE" if ((stock_percent_growth - nifty_beta*nifty_growth <= -threshold) and 
+                                        (stock_percent_growth - midcap_beta*midcap_growth <= -threshold) and 
+                                        (stock_percent_growth - smallcap_beta*smallcap_growth <= -threshold)) else "FALSE"
+
+            tracker_df.loc[idx, "Stop-loss Triggered"] = stoploss_hit
+
+        except Exception as e:
+            st.error(f"Error updating row {idx}: {e}")
+            continue
+
+    st.error(f"Beta values missing for {set(error_tickers)}")
+
+    # Store the updated DataFrame in session state
+    st.session_state.tracker_df = tracker_df
+    st.session_state.last_refresh_time = datetime.now()
+    
+    return tracker_df
+
 
 
 if __name__ == "__main__":
@@ -481,6 +500,13 @@ if __name__ == "__main__":
             if row['Stop-loss Triggered'] == 'TRUE':
                 return ['background-color: #fab5a6'] * len(row)
             return [''] * len(row)
+
+        #Write the stoploss condition based on strategy
+        if "Mom" in selected_sheet:
+            st.write("Stoploss Condition: Index compared 10")
+        
+        elif "Value" in selected_sheet:
+            st.write("Stoploss Condition: Beta Multiplied Index Compared 10")
         
         # Display the DataFrame with conditional formatting
         st.dataframe(
