@@ -376,7 +376,7 @@ def create_live_tracker(spreadsheet_id, selected_sheet, kite, google_sheet_crede
                                         (midcap_growth - stock_percent_growth >= 10) and 
                                         (smallcap_growth - stock_percent_growth >= 10)) else "FALSE"
             elif "Value" in selected_sheet:
-                beta_values = json.load(open("tmp/reg_data_store_monthly.json", 'r'))
+                beta_values = json.load(open("reg_data_store_monthly.json", 'r'))
                 ticker_symbol = f"{stock_name[4:]}.NS"
                 try:
                     latest_date = max(beta_values[ticker_symbol].keys())
